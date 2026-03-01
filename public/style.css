@@ -1,0 +1,258 @@
+:root {
+  --bg: #0d1117;
+  --panel: #161b22;
+  --text: #e6edf3;
+  --sub: #9aa4b2;
+  --accent: #2ea043;
+  --danger: #f85149;
+  --warn: #d29922;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+/* --- Layout shell --- */
+body {
+  margin: 0;
+  min-height: 100vh;
+  display: grid;
+  place-items: center;
+  font-family: "Segoe UI", Tahoma, Geneva, Verdana, sans-serif;
+  background: radial-gradient(circle at top, #1f2937, var(--bg) 60%);
+  color: var(--text);
+}
+
+.app {
+  width: min(92vw, 460px);
+  padding: 20px;
+  background: color-mix(in srgb, var(--panel) 86%, #000);
+  border: 1px solid #30363d;
+  border-radius: 14px;
+}
+
+h1 {
+  margin: 0;
+}
+
+.sub {
+  margin: 6px 0 14px;
+  color: var(--sub);
+}
+
+.egg-wrap {
+  position: relative;
+  width: 400px;
+  max-width: 100%;
+  margin: 0 auto;
+}
+
+/* --- Canvas / egg visual state --- */
+canvas {
+  display: block;
+  width: 100%;
+  height: auto;
+  border: 1px solid #30363d;
+  border-radius: 12px;
+  background: linear-gradient(160deg, #f5f7fa, #dfe7ef);
+}
+
+.crack-overlay {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  font-size: 48px;
+  font-weight: 800;
+  letter-spacing: 0.3rem;
+  color: rgba(0, 0, 0, 0.2);
+  text-shadow: 0 0 10px rgba(210, 153, 34, 0.4);
+  pointer-events: none;
+}
+
+.hidden {
+  display: none;
+}
+
+/* --- Controls and faction selector --- */
+.controls {
+  margin-top: 14px;
+}
+
+button {
+  width: 100%;
+  border: 0;
+  border-radius: 10px;
+  padding: 12px 14px;
+  font-size: 16px;
+  font-weight: 700;
+  background: var(--accent);
+  color: #fff;
+  cursor: pointer;
+}
+
+button:hover {
+  filter: brightness(1.08);
+}
+
+.factions {
+  margin-top: 8px;
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 8px;
+}
+
+.faction-btn {
+  height: 34px;
+  border-radius: 8px;
+  border: 2px solid #1f2630;
+  cursor: pointer;
+}
+
+.faction-btn.active {
+  border-color: #ffffff;
+  box-shadow: 0 0 0 1px #fff inset;
+}
+
+/* --- Information panels --- */
+.panel {
+  margin-top: 12px;
+  padding: 10px;
+  background: #0f141b;
+  border: 1px solid #2b3138;
+  border-radius: 10px;
+}
+
+.dev-stats {
+  margin-top: 8px;
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 6px;
+  font-size: 13px;
+  color: var(--sub);
+}
+
+.dev-chip {
+  padding: 6px 8px;
+  border: 1px solid #2b3138;
+  border-radius: 8px;
+  background: #0b1016;
+}
+
+.recent-colors {
+  margin-top: 6px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.recent-chip {
+  min-width: 72px;
+  text-align: center;
+  padding: 6px 8px;
+  border-radius: 999px;
+  border: 1px solid #2b3138;
+  background: #0b1016;
+  color: #d0d7de;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.row {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.bar {
+  margin-top: 8px;
+  width: 100%;
+  height: 14px;
+  border-radius: 999px;
+  background: #2b3138;
+  overflow: hidden;
+}
+
+.bar-fill {
+  height: 100%;
+  width: 0%;
+  background: linear-gradient(90deg, #2ea043, #d29922, #f85149);
+  transition: width 220ms ease;
+}
+
+.result {
+  min-height: 28px;
+  margin-top: 12px;
+  font-size: 18px;
+  font-weight: 800;
+  text-align: center;
+}
+
+.result.success {
+  color: #3fb950;
+}
+
+.result.fail {
+  color: var(--danger);
+}
+
+/* --- Runtime effects: instability / round transitions --- */
+@keyframes shake {
+  0% {
+    transform: translate(1px, 1px) rotate(0deg);
+  }
+  25% {
+    transform: translate(-1px, -2px) rotate(-1deg);
+  }
+  50% {
+    transform: translate(-3px, 0px) rotate(1deg);
+  }
+  75% {
+    transform: translate(3px, 2px) rotate(0deg);
+  }
+  100% {
+    transform: translate(1px, -1px) rotate(1deg);
+  }
+}
+
+.shake {
+  animation: shake 0.35s infinite;
+}
+
+.flash {
+  animation: flash 0.45s ease-in-out 3;
+}
+
+@keyframes flash {
+  0% {
+    box-shadow: 0 0 0 rgba(248, 81, 73, 0);
+  }
+  50% {
+    box-shadow: 0 0 36px rgba(248, 81, 73, 0.65);
+  }
+  100% {
+    box-shadow: 0 0 0 rgba(248, 81, 73, 0);
+  }
+}
+
+/* --- Prep phase atmosphere --- */
+body.prep {
+  background: radial-gradient(circle at top, #111827, #05070b 68%);
+}
+
+body.prep-last3 .app {
+  animation: prep-pulse 0.5s linear infinite;
+  border-color: #f85149;
+}
+
+@keyframes prep-pulse {
+  0% {
+    box-shadow: 0 0 0 rgba(248, 81, 73, 0);
+  }
+  50% {
+    box-shadow: 0 0 20px rgba(248, 81, 73, 0.55);
+  }
+  100% {
+    box-shadow: 0 0 0 rgba(248, 81, 73, 0);
+  }
+}

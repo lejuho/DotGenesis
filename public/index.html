@@ -1,0 +1,77 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>DotGenesis POC</title>
+    <link rel="stylesheet" href="/style.css" />
+  </head>
+  <body>
+    <main class="app">
+      <h1>DotGenesis</h1>
+      <p class="sub">Web2 Fake-Multiplayer POC</p>
+
+      <!-- Main play field (egg/canvas) -->
+      <div id="eggWrap" class="egg-wrap">
+        <canvas id="field" width="400" height="400"></canvas>
+        <div id="crackOverlay" class="crack-overlay hidden">CRACK</div>
+      </div>
+
+      <!-- Primary player action -->
+      <div class="controls">
+        <button id="seedBtn" type="button">Daily Seed</button>
+      </div>
+
+      <!-- Color faction selection (strategy input) -->
+      <section class="panel">
+        <div class="row">
+          <span>Faction</span>
+          <span id="selectedFactionLabel">#ff4d4d</span>
+        </div>
+        <div id="factionButtons" class="factions"></div>
+      </section>
+
+      <!-- Instability feedback -->
+      <section class="panel">
+        <div class="row">
+          <span>Instability</span>
+          <span id="instabilityValue">0</span>
+        </div>
+        <div class="bar">
+          <div id="instabilityFill" class="bar-fill"></div>
+        </div>
+      </section>
+
+      <!-- User-facing: recent color flow -->
+      <section class="panel">
+        <div class="row">
+          <span>Recent 5 Colors</span>
+        </div>
+        <div id="recentColors" class="recent-colors"></div>
+      </section>
+
+      <!-- Dev-only: remove later (visible only with ?dev=1) -->
+      <section id="devPanel" class="panel">
+        <div class="row">
+          <span>Dev Point Stats</span>
+          <span id="totalPointsStat">Total: 0</span>
+        </div>
+        <div id="factionStats" class="dev-stats"></div>
+      </section>
+
+      <!-- Global round timer (prep/active/rest) -->
+      <section class="panel">
+        <div class="row">
+          <span>Ascension (Prep 10s + Global 10m + Rest 1m)</span>
+          <span id="countdownValue">PREP 00:10 (R1)</span>
+        </div>
+      </section>
+
+      <!-- Round outcome summary -->
+      <p id="resultMessage" class="result"></p>
+    </main>
+
+    <script src="/socket.io/socket.io.js"></script>
+    <script src="/main.js"></script>
+  </body>
+</html>
