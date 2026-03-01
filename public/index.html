@@ -14,8 +14,19 @@
       <!-- Main play field (egg/canvas) -->
       <div id="eggWrap" class="egg-wrap">
         <canvas id="field" width="400" height="400"></canvas>
-        <div id="crackOverlay" class="crack-overlay hidden">CRACK</div>
+        <div id="crackOverlay" class="crack-overlay hidden">
+          <svg viewBox="0 0 400 400" aria-hidden="true">
+            <path d="M200 28 L188 90 L214 132 L196 172 L218 214 L180 246 L206 286 L182 334" />
+            <path d="M196 172 L140 164 L110 136 L78 142" />
+            <path d="M196 172 L256 170 L292 138 L326 146" />
+            <path d="M180 246 L126 254 L92 286 L58 286" />
+            <path d="M206 286 L256 294 L292 330 L338 336" />
+            <path d="M214 132 L248 98 L276 66 L304 58" />
+            <path d="M188 90 L160 70 L132 48 L100 38" />
+          </svg>
+        </div>
       </div>
+      <p id="fieldHint" class="field-hint">Seed the map to push ecosystem pressure.</p>
 
       <!-- Primary player action -->
       <div class="controls">

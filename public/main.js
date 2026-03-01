@@ -4,6 +4,7 @@ const canvas = document.getElementById("field");
 const ctx = canvas.getContext("2d");
 const eggWrap = document.getElementById("eggWrap");
 const crackOverlay = document.getElementById("crackOverlay");
+const fieldHint = document.getElementById("fieldHint");
 const seedBtn = document.getElementById("seedBtn");
 const devPanel = document.getElementById("devPanel");
 const factionButtons = document.getElementById("factionButtons");
@@ -118,6 +119,7 @@ function calculateInstability() {
 // --- Canvas rendering ---
 function drawField() {
   ctx.clearRect(0, 0, canvas.width, canvas.height);
+  drawArenaBackground();
   for (const p of points) {
     ctx.beginPath();
     ctx.arc(p.x, p.y, 5, 0, Math.PI * 2);
@@ -126,12 +128,57 @@ function drawField() {
   }
 }
 
+function drawArenaBackground() {
+  // Quadrants make spatial pressure zones visible so point placement feels meaningful.
+  const zones = [
+    { x: 0, y: 0, w: 200, h: 200, color: "rgba(255,77,77,0.06)" },
+    { x: 200, y: 0, w: 200, h: 200, color: "rgba(77,166,255,0.06)" },
+    { x: 0, y: 200, w: 200, h: 200, color: "rgba(77,255,136,0.06)" },
+    { x: 200, y: 200, w: 200, h: 200, color: "rgba(255,210,77,0.06)" },
+  ];
+  for (const z of zones) {
+    ctx.fillStyle = z.color;
+    ctx.fillRect(z.x, z.y, z.w, z.h);
+  }
+
+  ctx.strokeStyle = "rgba(20,24,32,0.15)";
+  ctx.lineWidth = 1;
+  ctx.beginPath();
+  ctx.moveTo(200, 0);
+  ctx.lineTo(200, 400);
+  ctx.moveTo(0, 200);
+  ctx.lineTo(400, 200);
+  ctx.stroke();
+
+  ctx.beginPath();
+  ctx.arc(200, 200, 72, 0, Math.PI * 2);
+  ctx.strokeStyle = "rgba(20,24,32,0.18)";
+  ctx.stroke();
+}
+
 function renderInstability() {
   instabilityValue.textContent = String(instability);
   instabilityFill.style.width = `${instability}%`;
 
-  crackOverlay.classList.toggle("hidden", instability <= 50);
+  const crackVisible = instability > 50;
+  crackOverlay.classList.toggle("hidden", !crackVisible);
+  crackOverlay.classList.toggle("severe", instability > 80);
+  if (crackVisible) {
+    const intensity = Math.min(Math.max((instability - 50) / 50, 0), 1);
+    crackOverlay.style.opacity = String(0.25 + intensity * 0.75);
+  } else {
+    crackOverlay.style.opacity = "0";
+  }
+
   eggWrap.classList.toggle("shake", instability > 80);
+
+  if (instability < 35) {
+    fieldHint.textContent = "Ecosystem stable. Small shifts are recoverable.";
+  } else if (instability < 70) {
+    fieldHint.textContent = "Pressure rising. Collective balance is needed.";
+  } else {
+    fieldHint.textContent = "Critical pressure. One-sided dominance may collapse.";
+  }
 }
 
 function renderPointStats() {
@@ -343,6 +390,11 @@ function handleSeed() {
     y: Math.random() * 400,
     color: selectedFaction,
   };
+
+  eggWrap.classList.add("seed-pulse");
+  setTimeout(() => {
+    eggWrap.classList.remove("seed-pulse");
+  }, 140);
 
   socket.emit("addPoint", newPoint);
 }

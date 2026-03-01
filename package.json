@@ -3,6 +3,8 @@
   "version": "1.0.0",
   "main": "index.js",
   "scripts": {
+    "start": "node server/index.js",
+    "verify:generations": "node scripts/verify_generations.js",
     "test": "echo \"Error: no test specified\" && exit 1"
   },
   "keywords": [],
@@ -11,6 +13,7 @@
   "description": "",
   "dependencies": {
     "express": "^5.2.1",
-    "socket.io": "^4.8.3"
+    "socket.io": "^4.8.3",
+    "sqlite3": "^5.1.7"
   }
 }

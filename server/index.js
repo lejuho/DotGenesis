@@ -1,7 +1,10 @@
 const path = require("path");
 const http = require("http");
+const fs = require("fs");
+const crypto = require("crypto");
 const express = require("express");
 const { Server } = require("socket.io");
+const sqlite3 = require("sqlite3").verbose();
 
 const app = express();
 const server = http.createServer(app);
@@ -28,6 +31,10 @@ const MIN_POINTS_FOR_INSTABILITY = Math.max(
 const RECENT_WINDOW = Math.max(8, Math.round(BASE_RECENT_WINDOW * TEMPO_SCALE));
 const PREVIEW_SAFE_BASE = 0.25;
 const PREVIEW_CAP = 12;
+const FORMULA_VERSION = "v1.0-hybrid-preview";
+const DB_DIR = path.join(__dirname, "..", "data");
+const DB_PATH = path.join(DB_DIR, "dotgenesis.db");
+const HISTORY_LIMIT = 20;
 
 let points = [];
 let state = {
@@ -38,6 +45,185 @@ let state = {
 };
 let history = [];
 let roundStats = createRoundStats();
+let activeStartedAt = null;
+let lastPersistedHash = "";
+let db;
+
+const FORMULA_PARAMS = {
+  baseMinPointsForInstability: BASE_MIN_POINTS_FOR_INSTABILITY,
+  safeDominance: SAFE_DOMINANCE,
+  baseRecentWindow: BASE_RECENT_WINDOW,
+  previewSafeBase: PREVIEW_SAFE_BASE,
+  previewCap: PREVIEW_CAP,
+  roundDurationMs: ROUND_DURATION_MS,
+  restDurationMs: REST_DURATION_MS,
+};
+
+function canonicalStringify(value) {
+  if (Array.isArray(value)) {
+    return `[${value.map((item) => canonicalStringify(item)).join(",")}]`;
+  }
+
+  if (value && typeof value === "object") {
+    const keys = Object.keys(value).sort();
+    return `{${keys
+      .map((key) => `${JSON.stringify(key)}:${canonicalStringify(value[key])}`)
+      .join(",")}}`;
+  }
+
+  return JSON.stringify(value);
+}
+
+function createGenerationPayload(summary) {
+  return {
+    round: summary.round,
+    startedAt: summary.startedAt,
+    endedAt: summary.endedAt,
+    reason: summary.reason,
+    outcome: summary.outcome,
+    peakInstability: summary.peakInstability,
+    totalPoints: summary.totalPoints,
+    mostUsedColor: summary.mostUsedColor,
+    mostUsedCount: summary.mostUsedCount,
+    bestStableSeconds: summary.bestStableSeconds,
+    formulaVersion: FORMULA_VERSION,
+    formulaParams: FORMULA_PARAMS,
+  };
+}
+
+function hashGeneration(prevHash, summary) {
+  const canonical = canonicalStringify(createGenerationPayload(summary));
+  return crypto.createHash("sha256").update(prevHash + canonical).digest("hex");
+}
+
+function run(sql, params = []) {
+  return new Promise((resolve, reject) => {
+    db.run(sql, params, function onRun(err) {
+      if (err) {
+        reject(err);
+        return;
+      }
+
+      resolve(this);
+    });
+  });
+}
+
+function get(sql, params = []) {
+  return new Promise((resolve, reject) => {
+    db.get(sql, params, (err, row) => {
+      if (err) {
+        reject(err);
+        return;
+      }
+
+      resolve(row);
+    });
+  });
+}
+
+function all(sql, params = []) {
+  return new Promise((resolve, reject) => {
+    db.all(sql, params, (err, rows) => {
+      if (err) {
+        reject(err);
+        return;
+      }
+
+      resolve(rows);
+    });
+  });
+}
+
+async function initDb() {
+  fs.mkdirSync(DB_DIR, { recursive: true });
+  db = new sqlite3.Database(DB_PATH);
+  await run(`
+    CREATE TABLE IF NOT EXISTS generations (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      round INTEGER NOT NULL,
+      started_at INTEGER,
+      ended_at INTEGER NOT NULL,
+      phase_end_reason TEXT NOT NULL,
+      outcome TEXT NOT NULL,
+      peak_instability INTEGER NOT NULL,
+      total_points INTEGER NOT NULL,
+      most_used_color TEXT NOT NULL,
+      most_used_count INTEGER NOT NULL,
+      best_stable_seconds INTEGER NOT NULL,
+      formula_version TEXT NOT NULL,
+      formula_params_json TEXT NOT NULL,
+      prev_hash TEXT NOT NULL,
+      hash TEXT NOT NULL
+    )
+  `);
+}
+
+function rowToSummary(row) {
+  return {
+    round: row.round,
+    startedAt: row.started_at,
+    endedAt: row.ended_at,
+    reason: row.phase_end_reason,
+    outcome: row.outcome,
+    peakInstability: row.peak_instability,
+    totalPoints: row.total_points,
+    mostUsedColor: row.most_used_color,
+    mostUsedCount: row.most_used_count,
+    bestStableSeconds: row.best_stable_seconds,
+    formulaVersion: row.formula_version,
+    prevHash: row.prev_hash,
+    hash: row.hash,
+  };
+}
+
+async function hydrateHistory() {
+  const rows = await all(
+    `SELECT *
+     FROM generations
+     ORDER BY id DESC
+     LIMIT ?`,
+    [HISTORY_LIMIT]
+  );
+  history = rows.map(rowToSummary);
+
+  const latest = await get(
+    "SELECT hash FROM generations ORDER BY id DESC LIMIT 1"
+  );
+  lastPersistedHash = latest?.hash || "";
+}
+
+async function persistGeneration(summary) {
+  const prevHash = lastPersistedHash;
+  const hash = hashGeneration(prevHash, summary);
+
+  await run(
+    `INSERT INTO generations (
+      round, started_at, ended_at, phase_end_reason, outcome, peak_instability,
+      total_points, most_used_color, most_used_count, best_stable_seconds,
+      formula_version, formula_params_json, prev_hash, hash
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    [
+      summary.round,
+      summary.startedAt,
+      summary.endedAt,
+      summary.reason,
+      summary.outcome,
+      summary.peakInstability,
+      summary.totalPoints,
+      summary.mostUsedColor,
+      summary.mostUsedCount,
+      summary.bestStableSeconds,
+      FORMULA_VERSION,
+      JSON.stringify(FORMULA_PARAMS),
+      prevHash,
+      hash,
+    ]
+  );
+
+  lastPersistedHash = hash;
+  return { ...summary, formulaVersion: FORMULA_VERSION, prevHash, hash };
+}
 
 // Per-round metrics used for summary and balancing.
 function createRoundStats() {
@@ -150,6 +336,7 @@ function summarizeRound(reason) {
 
   return {
     round: state.round,
+    startedAt: activeStartedAt,
     reason,
     outcome:
       roundStats.peakInstability > 70
@@ -169,23 +356,99 @@ function emitState() {
 }
 
 // Move active round to rest state and broadcast result.
-function endActiveRound(reason) {
+async function endActiveRound(reason) {
   const summary = summarizeRound(reason);
+  const persisted = await persistGeneration(summary);
   state = {
     ...state,
     phase: "rest",
     phaseEndsAt: Date.now() + REST_DURATION_MS,
-    lastOutcome: summary,
+    lastOutcome: persisted,
   };
 
-  history.unshift(summary);
-  history = history.slice(0, 20);
+  history.unshift(persisted);
+  history = history.slice(0, HISTORY_LIMIT);
 
-  io.emit("roundResult", summary);
+  io.emit("roundResult", persisted);
   emitState();
 }
 
 app.use(express.static(path.join(__dirname, "..", "public")));
+app.get("/api/generations", async (req, res) => {
+  try {
+    const parsed = Number(req.query.limit);
+    const limit =
+      Number.isFinite(parsed) && parsed > 0
+        ? Math.min(Math.floor(parsed), 100)
+        : 20;
+    const rows = await all(
+      `SELECT *
+       FROM generations
+       ORDER BY id DESC
+       LIMIT ?`,
+      [limit]
+    );
+
+    res.json({
+      items: rows.map((row) => ({
+        ...rowToSummary(row),
+        formulaParams: JSON.parse(row.formula_params_json),
+      })),
+    });
+  } catch (err) {
+    res.status(500).json({ error: "failed_to_fetch_generations" });
+  }
+});
+
+app.get("/api/generations/:id", async (req, res) => {
+  try {
+    const id = Number(req.params.id);
+    if (!Number.isFinite(id) || id <= 0) {
+      res.status(400).json({ error: "invalid_id" });
+      return;
+    }
+
+    const row = await get("SELECT * FROM generations WHERE id = ?", [id]);
+    if (!row) {
+      res.status(404).json({ error: "not_found" });
+      return;
+    }
+
+    res.json({
+      item: {
+        ...rowToSummary(row),
+        formulaParams: JSON.parse(row.formula_params_json),
+      },
+    });
+  } catch (err) {
+    res.status(500).json({ error: "failed_to_fetch_generation" });
+  }
+});
+
+app.get("/api/provenance/latest", async (_req, res) => {
+  try {
+    const row = await get(
+      `SELECT id, round, ended_at, formula_version, prev_hash, hash
+       FROM generations
+       ORDER BY id DESC
+       LIMIT 1`
+    );
+    res.json({
+      item: row
+        ? {
+            id: row.id,
+            round: row.round,
+            endedAt: row.ended_at,
+            formulaVersion: row.formula_version,
+            prevHash: row.prev_hash,
+            hash: row.hash,
+          }
+        : null,
+    });
+  } catch (err) {
+    res.status(500).json({ error: "failed_to_fetch_provenance" });
+  }
+});
 
 io.on("connection", (socket) => {
   // New clients receive current board, timer phase, and recent summary.
@@ -224,7 +487,7 @@ io.on("connection", (socket) => {
 
     // Hard fail condition: 100 instability ends the round immediately.
     if (instability >= 100) {
-      endActiveRound("Instability 100% overload");
+      void endActiveRound("Instability 100% overload");
     }
   });
 });
@@ -249,13 +512,14 @@ setInterval(() => {
       phaseEndsAt: now + ROUND_DURATION_MS,
       lastOutcome: null,
     };
+    activeStartedAt = now;
     roundStats = createRoundStats();
     emitState();
     return;
   }
 
   if (state.phase === "active") {
-    endActiveRound("Timer reached 00:00");
+    void endActiveRound("Timer reached 00:00");
     return;
   }
 
@@ -270,7 +534,18 @@ setInterval(() => {
   emitState();
 }, 250);
 
-server.listen(PORT, () => {
+async function bootstrap() {
+  await initDb();
+  await hydrateHistory();
+
+  server.listen(PORT, () => {
+    // eslint-disable-next-line no-console
+    console.log(`DotGenesis server running on http://localhost:${PORT}`);
+  });
+}
+
+bootstrap().catch((err) => {
   // eslint-disable-next-line no-console
-  console.log(`DotGenesis server running on http://localhost:${PORT}`);
+  console.error("Failed to start DotGenesis server:", err);
+  process.exit(1);
 });
