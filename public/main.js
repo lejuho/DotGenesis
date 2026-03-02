@@ -39,6 +39,10 @@ const SAFE_DOMINANCE = 0.6;
 const BASE_RECENT_WINDOW = 20;
 const ROUND_DURATION_MS = 10 * 60 * 1000;
 const BASE_ROUND_DURATION_MS = 10 * 60 * 1000;
+const CELL_STABLE_RADIUS = 5;
+const CELL_BIRTH_MS = 320;
+const CELL_DIFFUSION_MIN_MS = 500;
+const CELL_DIFFUSION_MAX_MS = 1000;
 const TEMPO_SCALE = Math.min(
   Math.max(ROUND_DURATION_MS / BASE_ROUND_DURATION_MS, 0.35),
   1
@@ -50,6 +54,13 @@ const MIN_POINTS_FOR_INSTABILITY = Math.max(
 const RECENT_WINDOW = Math.max(8, Math.round(BASE_RECENT_WINDOW * TEMPO_SCALE));
 const PREVIEW_SAFE_BASE = 0.25;
 const PREVIEW_CAP = 12;
+const DISH = {
+  cx: canvas.width / 2,
+  cy: canvas.height / 2,
+  radius: Math.min(canvas.width, canvas.height) * 0.46,
+};
+
+let noiseTexture = null;
 
 function calcDominance(samplePoints) {
   const counts = {};
@@ -116,43 +127,160 @@ function calculateInstability() {
   return Math.min(Math.floor(Math.max(preview, blended * sampleFactor)), 100);
 }
 
-// --- Canvas rendering ---
-function drawField() {
-  ctx.clearRect(0, 0, canvas.width, canvas.height);
-  drawArenaBackground();
-  for (const p of points) {
-    ctx.beginPath();
-    ctx.arc(p.x, p.y, 5, 0, Math.PI * 2);
-    ctx.fillStyle = p.color;
-    ctx.fill();
+function createNoiseTexture() {
+  const texture = document.createElement("canvas");
+  texture.width = 256;
+  texture.height = 256;
+  const tctx = texture.getContext("2d");
+
+  tctx.fillStyle = "rgba(8, 16, 24, 0.06)";
+  for (let i = 0; i < 2400; i += 1) {
+    const x = Math.random() * texture.width;
+    const y = Math.random() * texture.height;
+    const r = Math.random() * 1.6;
+    tctx.beginPath();
+    tctx.arc(x, y, r, 0, Math.PI * 2);
+    tctx.fill();
   }
+
+  tctx.strokeStyle = "rgba(18, 28, 38, 0.08)";
+  for (let i = 0; i < 220; i += 1) {
+    const x = Math.random() * texture.width;
+    const y = Math.random() * texture.height;
+    const len = 2 + Math.random() * 8;
+    tctx.beginPath();
+    tctx.moveTo(x, y);
+    tctx.lineTo(x + len, y + (Math.random() - 0.5) * len);
+    tctx.stroke();
+  }
+
+  return texture;
 }
 
-function drawArenaBackground() {
-  // Quadrants make spatial pressure zones visible so point placement feels meaningful.
-  const zones = [
-    { x: 0, y: 0, w: 200, h: 200, color: "rgba(255,77,77,0.06)" },
-    { x: 200, y: 0, w: 200, h: 200, color: "rgba(77,166,255,0.06)" },
-    { x: 0, y: 200, w: 200, h: 200, color: "rgba(77,255,136,0.06)" },
-    { x: 200, y: 200, w: 200, h: 200, color: "rgba(255,210,77,0.06)" },
-  ];
-  for (const z of zones) {
-    ctx.fillStyle = z.color;
-    ctx.fillRect(z.x, z.y, z.w, z.h);
+function applyDishMask() {
+  ctx.beginPath();
+  ctx.arc(DISH.cx, DISH.cy, DISH.radius, 0, Math.PI * 2);
+  ctx.clip();
+}
+
+function drawDishBackground(now) {
+  const pulse = (Math.sin(now * 0.0013) + 1) * 0.5;
+
+  const dishGradient = ctx.createRadialGradient(
+    DISH.cx - 38,
+    DISH.cy - 42,
+    24,
+    DISH.cx,
+    DISH.cy,
+    DISH.radius
+  );
+  dishGradient.addColorStop(0, "#f2f8ef");
+  dishGradient.addColorStop(0.55, "#dce9dc");
+  dishGradient.addColorStop(1, "#bacdbd");
+  ctx.fillStyle = dishGradient;
+  ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+  if (!noiseTexture) {
+    noiseTexture = createNoiseTexture();
+  }
+  ctx.globalAlpha = 0.3 + pulse * 0.14;
+  ctx.drawImage(noiseTexture, 0, 0, canvas.width, canvas.height);
+  ctx.globalAlpha = 1;
+
+  const innerVignette = ctx.createRadialGradient(
+    DISH.cx,
+    DISH.cy,
+    DISH.radius * 0.36,
+    DISH.cx,
+    DISH.cy,
+    DISH.radius * 1.05
+  );
+  innerVignette.addColorStop(0, "rgba(255, 255, 255, 0)");
+  innerVignette.addColorStop(1, "rgba(15, 30, 24, 0.2)");
+  ctx.fillStyle = innerVignette;
+  ctx.fillRect(0, 0, canvas.width, canvas.height);
+}
+
+function drawCell(point, now) {
+  const bornAt = typeof point.bornAt === "number" ? point.bornAt : 0;
+  const age = now - bornAt;
+
+  if (age >= 0 && age <= CELL_DIFFUSION_MAX_MS) {
+    const diffusionMs =
+      typeof point.diffusionMs === "number"
+        ? point.diffusionMs
+        : CELL_DIFFUSION_MAX_MS;
+    const diffProgress = Math.min(age / diffusionMs, 1);
+    const diffRadius = 8 + diffProgress * 26;
+    const halo = ctx.createRadialGradient(
+      point.x,
+      point.y,
+      CELL_STABLE_RADIUS,
+      point.x,
+      point.y,
+      diffRadius
+    );
+    halo.addColorStop(0, `${point.color}66`);
+    halo.addColorStop(0.5, `${point.color}22`);
+    halo.addColorStop(1, "rgba(255, 255, 255, 0)");
+    ctx.fillStyle = halo;
+    ctx.fillRect(point.x - diffRadius, point.y - diffRadius, diffRadius * 2, diffRadius * 2);
   }
 
-  ctx.strokeStyle = "rgba(20,24,32,0.15)";
-  ctx.lineWidth = 1;
+  let radius = CELL_STABLE_RADIUS;
+  let alpha = 0.92;
+  if (age >= 0 && age <= CELL_BIRTH_MS) {
+    const t = Math.min(age / CELL_BIRTH_MS, 1);
+    const swell = 1.6 * (1 - t);
+    radius = CELL_STABLE_RADIUS + swell;
+    alpha = 0.38 + t * 0.54;
+  }
+
+  const wobblePhase = (typeof point.seed === "number" ? point.seed : 0.5) * Math.PI * 2;
+  const wobble = Math.sin(now * 0.03 + wobblePhase) * 0.55;
+
+  ctx.fillStyle = `${point.color}${Math.floor(alpha * 255)
+    .toString(16)
+    .padStart(2, "0")}`;
   ctx.beginPath();
-  ctx.moveTo(200, 0);
-  ctx.lineTo(200, 400);
-  ctx.moveTo(0, 200);
-  ctx.lineTo(400, 200);
+  for (let i = 0; i < 14; i += 1) {
+    const theta = (i / 14) * Math.PI * 2;
+    const local = radius + Math.sin(theta * 3 + wobblePhase) * 0.42 + wobble;
+    const x = point.x + Math.cos(theta) * local;
+    const y = point.y + Math.sin(theta) * local;
+    if (i === 0) {
+      ctx.moveTo(x, y);
+    } else {
+      ctx.lineTo(x, y);
+    }
+  }
+  ctx.closePath();
+  ctx.fill();
+}
+
+// --- Canvas rendering ---
+function drawField() {
+  const now = performance.now();
+
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
+  ctx.save();
+  applyDishMask();
+  drawDishBackground(now);
+  for (const p of points) {
+    drawCell(p, now);
+  }
+  ctx.restore();
+
+  ctx.beginPath();
+  ctx.arc(DISH.cx, DISH.cy, DISH.radius + 2, 0, Math.PI * 2);
+  ctx.strokeStyle = "rgba(247, 255, 252, 0.68)";
+  ctx.lineWidth = 6;
   ctx.stroke();
 
   ctx.beginPath();
-  ctx.arc(200, 200, 72, 0, Math.PI * 2);
-  ctx.strokeStyle = "rgba(20,24,32,0.18)";
+  ctx.arc(DISH.cx, DISH.cy, DISH.radius - 2, 0, Math.PI * 2);
+  ctx.strokeStyle = "rgba(20, 26, 24, 0.22)";
+  ctx.lineWidth = 1.5;
   ctx.stroke();
 }
 
@@ -173,11 +301,11 @@ function renderInstability() {
   eggWrap.classList.toggle("shake", instability > 80);
 
   if (instability < 35) {
-    fieldHint.textContent = "Ecosystem stable. Small shifts are recoverable.";
+    fieldHint.textContent = "Culture stable. Small shifts can still recover.";
   } else if (instability < 70) {
-    fieldHint.textContent = "Pressure rising. Collective balance is needed.";
+    fieldHint.textContent = "Pressure rising. Collective balancing is needed.";
   } else {
-    fieldHint.textContent = "Critical pressure. One-sided dominance may collapse.";
+    fieldHint.textContent = "Critical pressure. Dominance can collapse the dish.";
   }
 }
 
@@ -255,13 +383,23 @@ function formatTime(seconds) {
   return `${m}:${s}`;
 }
 
+function decoratePoint(point, bornAt = performance.now()) {
+  return {
+    ...point,
+    bornAt,
+    seed: Math.random(),
+    diffusionMs:
+      CELL_DIFFUSION_MIN_MS +
+      Math.random() * (CELL_DIFFUSION_MAX_MS - CELL_DIFFUSION_MIN_MS),
+  };
+}
+
 // Called when a point update arrives from socket.
 function onPoint(point) {
-  points.push(point);
+  points.push(decoratePoint(point));
   recentColorLog.unshift(point.color);
   recentColorLog = recentColorLog.slice(0, 5);
   instability = calculateInstability();
-  drawField();
   renderInstability();
   renderPointStats();
   renderRecentColors();
@@ -375,6 +513,15 @@ function triggerRoundFlash() {
   eggWrap.classList.add("flash");
 }
 
+function randomPointInDish() {
+  const theta = Math.random() * Math.PI * 2;
+  const radial = Math.sqrt(Math.random()) * (DISH.radius - 8);
+  return {
+    x: DISH.cx + Math.cos(theta) * radial,
+    y: DISH.cy + Math.sin(theta) * radial,
+  };
+}
+
 // Player action: emit a point with selected faction color.
 function handleSeed() {
   if (phase !== "active" || cooldown) {
@@ -385,9 +532,10 @@ function handleSeed() {
   cooldownEndsAt = Date.now() + 5000;
   renderSeedButton();
 
+  const seedPosition = randomPointInDish();
   const newPoint = {
-    x: Math.random() * 400,
-    y: Math.random() * 400,
+    x: seedPosition.x,
+    y: seedPosition.y,
     color: selectedFaction,
   };
 
@@ -409,9 +557,11 @@ if (!DEV_MODE && devPanel) {
 // --- Socket event wiring ---
 socket.on("init", (payload) => {
   if (Array.isArray(payload)) {
-    points = payload;
+    points = payload.map((p) => decoratePoint(p, -100000));
   } else {
-    points = Array.isArray(payload?.points) ? payload.points : [];
+    points = Array.isArray(payload?.points)
+      ? payload.points.map((p) => decoratePoint(p, -100000))
+      : [];
     applyState(payload?.state);
     const latest = Array.isArray(payload?.history) ? payload.history[0] : null;
     if (latest) {
@@ -423,7 +573,6 @@ socket.on("init", (payload) => {
 
   instability = calculateInstability();
   recentColorLog = points.slice(-5).reverse().map((p) => p.color);
-  drawField();
   renderInstability();
   renderPointStats();
   renderRecentColors();
@@ -452,7 +601,6 @@ socket.on("resetPoints", () => {
   points = [];
   instability = 0;
   recentColorLog = [];
-  drawField();
   renderInstability();
   renderPointStats();
   renderRecentColors();
@@ -461,6 +609,13 @@ socket.on("resetPoints", () => {
 socket.on("update", (point) => {
   onPoint(point);
 });
+
+function renderLoop() {
+  drawField();
+  requestAnimationFrame(renderLoop);
+}
+
+requestAnimationFrame(renderLoop);
 
 // UI refresh loop for countdown and cooldown labels.
 setInterval(() => {
